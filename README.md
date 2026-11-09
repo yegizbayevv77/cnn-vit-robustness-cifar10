@@ -15,7 +15,7 @@ Code and raw results for the paper *"How Far Does Data Augmentation Narrow the C
 | `scripts/cv_robustness_v2.py` | Round-2 experiment script (same recipe; adds models and single-family conditions). |
 | `scripts/analyze.py` | Main tables and figures for ResNet-50 / DeiT-S. |
 | `scripts/analyze_v2.py` | Confidence intervals, four-model comparison, transfer matrix, clean-vs-robust plot. |
-| `results/*.json` | 48 files, one per (model, condition, seed): clean accuracy and accuracy for each of the 15 CIFAR-10-C corruptions at 5 severities. |
+| `results/*.json` | 72 files, one per (model, condition, seed): clean accuracy and accuracy for each of the 15 CIFAR-10-C corruptions at 5 severities. |
 | `analysis/` | Summary tables (`results_summary.md`, `results_summary_v2.md`) and the figures used in the paper. |
 
 ## Setup

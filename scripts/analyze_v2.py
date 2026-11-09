@@ -28,6 +28,7 @@ CNNS, VITS = ["resnet50", "convnext_tiny"], ["deit_small", "swin_tiny"]
 MNAME = {"resnet50": "ResNet-50", "deit_small": "DeiT-S", "convnext_tiny": "ConvNeXt-T", "swin_tiny": "Swin-T"}
 CNAME = {"baseline": "Baseline", "corrupt_aug": "Noise+blur aug.", "augmix": "AugMix",
          "aug_noise": "Noise aug.", "aug_blur": "Blur aug.", "aug_digital": "Digital aug."}
+CNAME.update({"nb_p25": "Noise+blur, $p=0.25$", "nb_p100": "Noise+blur, $p=1$", "nb_weak": "Noise+blur, $S=0.5$", "nb_strong": "Noise+blur, $S=1.5$"})
 TRAINED_FAMS = {"baseline": [], "aug_noise": ["noise"], "aug_blur": ["blur"],
                 "corrupt_aug": ["noise", "blur"], "aug_digital": ["digital"]}
 # categorical slots 1-4 of the validated palette; ViTs also get a hatch so identity is not colour-only
@@ -251,7 +252,8 @@ if len(tconds) >= 3:
     plt.close(fig)
 
 # ---------- Clean accuracy vs corrupted accuracy (frontier) ----------
-pts = [(m, c) for (m, c) in S if len(S[(m, c)]) >= 2]
+SENS = {"nb_p25": ("p", 0.25), "nb_p100": ("p", 1.0), "nb_weak": ("S", 0.5), "nb_strong": ("S", 1.5)}
+pts = [(m, c) for (m, c) in S if len(S[(m, c)]) >= 2 and c not in SENS]   # sensitivity runs get their own figure
 if pts:
     MK = {"baseline": "o", "corrupt_aug": "s", "augmix": "D", "aug_noise": "^", "aug_blur": "v", "aug_digital": "P"}
     # two panels with a shared y axis: ResNet-50 sits ~2 pp lower in clean accuracy than the rest,
@@ -286,6 +288,58 @@ if pts:
     fig.subplots_adjust(left=0.09, right=0.78, top=0.91, bottom=0.16)
     for ext in ["pdf", "png"]:
         fig.savefig(os.path.join(OUT, f"fig_frontier.{ext}"), dpi=200)
+    plt.close(fig)
+
+
+# ---------- Sensitivity of noise+blur augmentation to probability p and intensity S (ResNet-50 vs DeiT-S) ----------
+SENS_ROWS = [("p", 0.25, "nb_p25"), ("p", 0.5, "corrupt_aug"), ("p", 1.0, "nb_p100"),
+             ("S", 0.5, "nb_weak"), ("S", 1.0, "corrupt_aug"), ("S", 1.5, "nb_strong")]
+if all(has(m, c) for m in ["resnet50", "deit_small"] for _, _, c in SENS_ROWS) and has("resnet50", "baseline"):
+    tex = [r"\begin{tabular}{llcccccc}", r"\toprule",
+           r"& & \multicolumn{2}{c}{Clean acc. (\%)} & \multicolumn{2}{c}{Seen} & \multicolumn{2}{c}{Unseen} \\",
+           r"\cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}",
+           r"Varied & Value & R & D & Gap, pp [95\% CI] & Ratio & Gap, pp [95\% CI] & Ratio \\", r"\midrule"]
+    md += ["", "## Sensitivity of noise+blur aug. (p = probability, S = intensity multiplier); R = ResNet-50, D = DeiT-S", "",
+           "| varied | value | clean R | clean D | seen R | seen D | unseen R | unseen D | seen gap [CI] | seen ratio | unseen gap [CI] | unseen ratio |",
+           "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    base = {k: gap("resnet50", "deit_small", "baseline", k) for k in ["seen", "unseen"]}
+    for i, (var, val, c) in enumerate(SENS_ROWS):
+        d = {k: gap("resnet50", "deit_small", c, k) for k in ["seen", "unseen"]}
+        cl = [vals(m, c, "clean").mean() * 100 for m in ["resnet50", "deit_small"]]
+        dr = {(m, k): vals(m, c, k).mean() * 100 for m in ["resnet50", "deit_small"] for k in ["seen", "unseen"]}
+        label = ("Probability $p$" if var == "p" else "Intensity $S$") if i % 3 == 0 else ""
+        star = r"$^\dagger$" if c == "corrupt_aug" else ""
+        tex.append(f"{label} & {val:g}{star} & {cl[0]:.2f} & {cl[1]:.2f} & {fmt_ci(d['seen'])} & {d['seen']['ratio']:.2f} & {fmt_ci(d['unseen'])} & {d['unseen']['ratio']:.2f} \\\\")
+        if i == 2:
+            tex.append(r"\midrule")
+        red = {k: 100 * (1 - d[k]["g"] / base[k]["g"]) for k in ["seen", "unseen"]}
+        md.append(f"| {var} | {val:g} | {cl[0]:.2f} | {cl[1]:.2f} | {dr[('resnet50','seen')]:.2f} | {dr[('deit_small','seen')]:.2f} | {dr[('resnet50','unseen')]:.2f} | {dr[('deit_small','unseen')]:.2f} | "
+                  f"{d['seen']['g']:+.2f} [{d['seen']['lo']:+.2f}, {d['seen']['hi']:+.2f}] ({red['seen']:.0f}% red.) | {d['seen']['ratio']:.2f} | "
+                  f"{d['unseen']['g']:+.2f} [{d['unseen']['lo']:+.2f}, {d['unseen']['hi']:+.2f}] ({red['unseen']:.0f}% red.) | {d['unseen']['ratio']:.2f} |")
+    tex += [r"\bottomrule", r"\end{tabular}"]
+    open(os.path.join(OUT, "table_sensitivity.tex"), "w").write("\n".join(tex) + "\n")
+
+    fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.7), sharey=True)
+    for ax, var, title, xl in zip(axes, ["p", "S"], ["Augmentation probability", "Augmentation intensity"],
+                                  ["Probability $p$ (share of corrupted images)", "Intensity multiplier $S$"]):
+        rows = [(val, c) for v, val, c in SENS_ROWS if v == var]
+        xs = [0.0] + [val for val, _ in rows]
+        for m in ["resnet50", "deit_small"]:
+            for k, ls, mk in [("seen", "-", "o"), ("unseen", "--", "s")]:
+                mu = [vals(m, "baseline", k).mean() * 100] + [vals(m, c, k).mean() * 100 for _, c in rows]
+                sd = [vals(m, "baseline", k).std(ddof=1) * 100] + [vals(m, c, k).std(ddof=1) * 100 for _, c in rows]
+                ax.errorbar(xs, mu, yerr=sd, color=COLOR[m], linestyle=ls, marker=mk, markersize=4.5, linewidth=1.6,
+                            capsize=1.5, elinewidth=0.8, label=f"{MNAME[m]}, {k}")
+        ax.set_xticks(xs, ["none"] + [f"{x:g}" for x in xs[1:]])
+        ax.set_xlabel(xl)
+        ax.set_title(title, fontsize=9, color=INK)
+        ax.yaxis.grid(True, color=GRID, linewidth=0.8); ax.set_axisbelow(True)
+    axes[0].set_ylabel("Relative accuracy drop (%)")
+    h, l = axes[0].get_legend_handles_labels()
+    fig.legend(h, l, frameon=False, fontsize=7.5, loc="lower center", ncol=4, bbox_to_anchor=(0.5, -0.01), handlelength=3)
+    fig.tight_layout(rect=(0, 0.09, 1, 1))
+    for ext in ["pdf", "png"]:
+        fig.savefig(os.path.join(OUT, f"fig_sensitivity.{ext}"), dpi=200)
     plt.close(fig)
 
 open(os.path.join(OUT, "results_summary_v2.md"), "w").write("\n".join(md) + "\n")
